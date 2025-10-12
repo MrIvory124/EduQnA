@@ -1,0 +1,331 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lecture Q&A - Session</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Ask a Question</h1>
+
+    <section class="card" id="session-info">
+      <p><strong>Session:</strong> <span id="session-name"></span></p>
+      <p><strong>Session ID:</strong> <span id="session-id"></span></p>
+      <p><strong>Expires:</strong> <span id="session-expiry"></span></p>
+      <p id="session-status"></p>
+    </section>
+
+    <section class="card" id="password-card" hidden>
+      <h2>Join this session</h2>
+      <form id="password-form">
+        <label for="username-input">Display name</label>
+        <input id="username-input" type="text" maxlength="50" autocomplete="name" required />
+
+        <label for="password-input">Session password</label>
+        <input id="password-input" type="password" autocomplete="off" required />
+        <button type="submit">Continue</button>
+      </form>
+      <p class="hint">Your display name will appear beside any questions you submit.</p>
+      <p id="password-error" class="notice" hidden></p>
+    </section>
+
+    <section class="card" id="submission-card" hidden>
+      <h2>Submit a question</h2>
+      <form id="question-form">
+        <label for="question-text">Question</label>
+        <textarea id="question-text" name="question" rows="3" maxlength="500" required></textarea>
+        <button type="submit">Send question</button>
+      </form>
+      <p class="notice">Questions are lightly sanitized now. Profanity filter hooks are ready for future integrations.</p>
+      <p id="form-error" class="notice" hidden></p>
+    </section>
+
+    <section class="card" id="questions-card" hidden>
+      <h2>Top Questions</h2>
+      <ul id="question-list" class="question-list"></ul>
+      <p id="empty-state" class="empty-state" hidden>Be the first to ask something!</p>
+    </section>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get('sessionId');
+    let sessionPassword = params.get('password') || '';
+    if (!sessionId) {
+      document.body.innerHTML = '<main class="container"><section class="card"><h2>Missing session</h2><p>Provide a sessionId in the URL. For example: session.html?sessionId=abc123</p></section></main>';
+      throw new Error('sessionId missing');
+    }
+
+    const sessionNameEl = document.getElementById('session-name');
+    const sessionIdEl = document.getElementById('session-id');
+    const sessionExpiryEl = document.getElementById('session-expiry');
+    const sessionStatusEl = document.getElementById('session-status');
+    const passwordCard = document.getElementById('password-card');
+    const passwordForm = document.getElementById('password-form');
+    const passwordInput = document.getElementById('password-input');
+    const usernameInput = document.getElementById('username-input');
+    const passwordErrorEl = document.getElementById('password-error');
+    const submissionCard = document.getElementById('submission-card');
+    const questionForm = document.getElementById('question-form');
+    const questionTextEl = document.getElementById('question-text');
+    const submitButton = questionForm.querySelector('button');
+    const questionsCard = document.getElementById('questions-card');
+    const questionListEl = document.getElementById('question-list');
+    const emptyStateEl = document.getElementById('empty-state');
+    const formErrorEl = document.getElementById('form-error');
+
+    sessionIdEl.textContent = sessionId;
+
+    const participantStorageKey = `qa-participant-${sessionId}`;
+    let participantId = localStorage.getItem(participantStorageKey);
+    if (!participantId && window.crypto?.randomUUID) {
+      participantId = crypto.randomUUID();
+      localStorage.setItem(participantStorageKey, participantId);
+    }
+    if (!participantId) {
+      participantId = `anon-${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem(participantStorageKey, participantId);
+    }
+
+    const votedKey = `${participantStorageKey}-votes`;
+    const passwordStorageKey = `${participantStorageKey}-password`;
+    const nameStorageKey = `${participantStorageKey}-name`;
+
+    const localVotes = new Set(JSON.parse(localStorage.getItem(votedKey) || '[]'));
+
+    function persistVotes() {
+      localStorage.setItem(votedKey, JSON.stringify(Array.from(localVotes)));
+    }
+
+    let displayName = localStorage.getItem(nameStorageKey) || '';
+    let socket;
+
+    function formatTimestamp(ts) {
+      const date = new Date(ts);
+      return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+    }
+
+    function renderSession(session) {
+      sessionNameEl.textContent = session.name;
+      sessionExpiryEl.textContent = formatTimestamp(session.expiresAt);
+      sessionStatusEl.textContent = `Status: ${session.status}`;
+
+      const isActive = session.status === 'active';
+      submitButton.disabled = !isActive;
+
+      questionListEl.innerHTML = '';
+      const visibleQuestions = session.questions.filter((question) => question.moderation === 'approved');
+      if (!visibleQuestions.length) {
+        emptyStateEl.hidden = false;
+        return;
+      }
+      emptyStateEl.hidden = true;
+
+      visibleQuestions.forEach((question) => {
+        const item = document.createElement('li');
+        item.className = 'question-item';
+
+        const content = document.createElement('div');
+        const text = document.createElement('p');
+        text.textContent = question.text;
+
+        const alias = document.createElement('div');
+        alias.className = 'question-meta';
+        alias.textContent = question.authorAlias ? `Submitted by ${question.authorAlias}` : 'Submitted anonymously';
+
+        const meta = document.createElement('div');
+        meta.className = 'question-meta';
+        meta.textContent = `${question.upvotes} votes`;
+
+        content.appendChild(text);
+        content.appendChild(alias);
+        content.appendChild(meta);
+
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+
+        const statusPill = document.createElement('span');
+        statusPill.className = 'status-pill';
+        statusPill.textContent = question.status;
+        if (question.status === 'answered') {
+          statusPill.classList.add('answered');
+        }
+
+        const upvoteButton = document.createElement('button');
+        const alreadyVoted = localVotes.has(question.id);
+        upvoteButton.textContent = alreadyVoted ? 'Upvoted' : 'Upvote';
+        upvoteButton.disabled = !isActive || question.status !== 'open' || alreadyVoted;
+        upvoteButton.addEventListener('click', () => {
+          if (!socket) {
+            showFormError('Still connecting, try again in a moment.');
+            return;
+          }
+          socket.emit('question:upvote', { questionId: question.id });
+          localVotes.add(question.id);
+          persistVotes();
+          upvoteButton.textContent = 'Upvoted';
+          upvoteButton.disabled = true;
+        });
+
+        actions.appendChild(statusPill);
+        actions.appendChild(upvoteButton);
+
+        item.appendChild(content);
+        item.appendChild(actions);
+        questionListEl.appendChild(item);
+      });
+    }
+
+    function showFormError(message) {
+      formErrorEl.textContent = message;
+      formErrorEl.hidden = false;
+    }
+
+    function clearFormError() {
+      formErrorEl.hidden = true;
+      formErrorEl.textContent = '';
+    }
+
+    function showPasswordCard(message) {
+      if (typeof message === 'string' && message.length) {
+        passwordErrorEl.textContent = message;
+        passwordErrorEl.hidden = false;
+      } else {
+        passwordErrorEl.hidden = true;
+        passwordErrorEl.textContent = '';
+      }
+      if (sessionPassword) {
+        passwordInput.value = sessionPassword;
+      }
+      if (displayName) {
+        usernameInput.value = displayName;
+      }
+      passwordCard.hidden = false;
+      submissionCard.hidden = true;
+      questionsCard.hidden = true;
+    }
+
+    function hidePasswordCard() {
+      passwordCard.hidden = true;
+      passwordErrorEl.hidden = true;
+      passwordErrorEl.textContent = '';
+    }
+
+    questionForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      clearFormError();
+
+      if (!socket) {
+        showFormError('Connecting to session, please try again in a moment.');
+        return;
+      }
+
+      if (!displayName) {
+        showFormError('Missing display name. Rejoin the session.');
+        return;
+      }
+
+      const text = questionTextEl.value.trim();
+      if (!text) {
+        showFormError('Please enter a question.');
+        return;
+      }
+
+      socket.emit('question:add', { text, authorAlias: displayName });
+      questionTextEl.value = '';
+    });
+
+    passwordForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const suppliedPassword = passwordInput.value.trim();
+      const suppliedName = usernameInput.value.trim();
+
+      if (!suppliedName) {
+        passwordErrorEl.textContent = 'Please enter a display name.';
+        passwordErrorEl.hidden = false;
+        usernameInput.focus();
+        return;
+      }
+      if (!suppliedPassword) {
+        passwordErrorEl.textContent = 'Please enter the session password.';
+        passwordErrorEl.hidden = false;
+        passwordInput.focus();
+        return;
+      }
+      attemptJoin(suppliedPassword, true, suppliedName);
+    });
+
+    async function attemptJoin(password, remember = false, providedName = null) {
+      const cleanedPassword = (password || '').trim();
+      if (!cleanedPassword) {
+        showPasswordCard('Please enter the session password.');
+        return;
+      }
+
+      if (providedName !== null) {
+        displayName = providedName.trim();
+      }
+      if (!displayName) {
+        showPasswordCard('Please enter a display name to continue.');
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}?password=${encodeURIComponent(cleanedPassword)}`);
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ message: 'Unable to load session' }));
+          throw new Error(error.message);
+        }
+        const session = await response.json();
+        sessionPassword = cleanedPassword;
+        if (remember) {
+          localStorage.setItem(passwordStorageKey, sessionPassword);
+          localStorage.setItem(nameStorageKey, displayName);
+        }
+        hidePasswordCard();
+        submissionCard.hidden = false;
+        questionsCard.hidden = false;
+        renderSession(session);
+
+        if (socket) {
+          socket.disconnect();
+        }
+
+        socket = io({
+          query: { sessionId, participantId, password: sessionPassword }
+        });
+
+        socket.on('session:update', renderSession);
+        socket.on('session:inactive', () => {
+          showFormError('Session is closed or expired.');
+          submitButton.disabled = true;
+        });
+        socket.on('question:error', (payload) => {
+          showFormError(payload.message || 'Unable to submit question.');
+        });
+      } catch (error) {
+        showPasswordCard(error.message || 'Invalid password, please try again.');
+        passwordInput.focus();
+      }
+    }
+
+    const storedPassword = localStorage.getItem(passwordStorageKey);
+
+    if (sessionPassword && displayName) {
+      attemptJoin(sessionPassword);
+    } else if (sessionPassword && !displayName) {
+      showPasswordCard();
+    } else if (storedPassword && displayName) {
+      attemptJoin(storedPassword);
+    } else if (storedPassword && !displayName) {
+      sessionPassword = storedPassword;
+      showPasswordCard('Enter a display name to continue.');
+    } else {
+      showPasswordCard();
+    }
+  </script>
+</body>
+</html>

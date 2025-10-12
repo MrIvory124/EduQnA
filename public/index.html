@@ -1,0 +1,170 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lecture Q&A - Create Session</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Lecture Q&amp;A Prototype</h1>
+    <section class="card">
+      <h2>Create a live session</h2>
+      <form id="session-form">
+        <label for="session-name">Session name (optional)</label>
+        <input id="session-name" name="name" type="text" maxlength="60" placeholder="Will generate a friendly name" />
+
+        <label for="expiresInMinutes">Session length (minutes)</label>
+        <input id="expiresInMinutes" name="expiresInMinutes" type="number" min="5" max="480" value="60" required />
+
+        <button type="submit">Create session</button>
+      </form>
+      <p class="hint">A unique attendee link and password will be generated. Session links expire automatically.</p>
+    </section>
+
+    <section class="card" id="result-card" hidden>
+      <h2>Session ready</h2>
+      <div class="meta-grid">
+        <div><strong>Name:</strong> <span id="result-name"></span></div>
+        <div><strong>Password:</strong> <code id="result-password"></code></div>
+        <div><strong>Expires:</strong> <span id="result-expiry"></span></div>
+      </div>
+      <p>Share the attendee link with your class. Keep the admin link private.</p>
+      <div class="link-block">
+        <span class="label">Attendee link</span>
+        <a id="attendee-link" href="#" target="_blank" rel="noreferrer noopener"></a>
+      </div>
+      <div class="link-block">
+        <span class="label">Admin dashboard</span>
+        <a id="admin-link" href="#" target="_blank" rel="noreferrer noopener"></a>
+      </div>
+    </section>
+
+    <section class="card" id="error-card" hidden>
+      <h2>Could not create session</h2>
+      <p id="error-message"></p>
+    </section>
+
+    <section class="card" id="active-card">
+      <h2>Active sessions</h2>
+      <p class="hint">Anyone with the attendee link and password can join.</p>
+      <ul id="active-sessions" class="session-list"></ul>
+      <p id="no-sessions" class="empty-state" hidden>No sessions are active right now.</p>
+      <button id="refresh-button" type="button">Refresh list</button>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById('session-form');
+    const resultCard = document.getElementById('result-card');
+    const errorCard = document.getElementById('error-card');
+    const errorMessage = document.getElementById('error-message');
+    const attendeeLinkEl = document.getElementById('attendee-link');
+    const adminLinkEl = document.getElementById('admin-link');
+    const resultNameEl = document.getElementById('result-name');
+    const resultPasswordEl = document.getElementById('result-password');
+    const resultExpiryEl = document.getElementById('result-expiry');
+    const activeSessionsEl = document.getElementById('active-sessions');
+    const noSessionsEl = document.getElementById('no-sessions');
+    const refreshButton = document.getElementById('refresh-button');
+
+    async function loadActiveSessions() {
+      try {
+        const response = await fetch('/api/sessions');
+        if (!response.ok) {
+          throw new Error('Unable to load sessions');
+        }
+        const data = await response.json();
+        activeSessionsEl.innerHTML = '';
+        const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+        if (!sessions.length) {
+          noSessionsEl.hidden = false;
+          noSessionsEl.textContent = 'No sessions are active right now.';
+          return;
+        }
+        noSessionsEl.hidden = true;
+        const formatter = new Intl.DateTimeFormat(undefined, {
+          dateStyle: 'medium',
+          timeStyle: 'short'
+        });
+        sessions.forEach((session) => {
+          const li = document.createElement('li');
+          li.className = 'session-list-item';
+
+          const nameHeading = document.createElement('h3');
+          const link = document.createElement('a');
+          link.href = `/session.html?sessionId=${encodeURIComponent(session.id)}`;
+          link.textContent = session.name;
+          link.target = '_blank';
+          link.rel = 'noreferrer noopener';
+          nameHeading.appendChild(link);
+          li.appendChild(nameHeading);
+
+          const meta = document.createElement('div');
+          meta.className = 'session-list-meta';
+          meta.innerHTML = `
+            <span><strong>ID:</strong> <code>${session.id}</code></span>
+            <span><strong>Expires:</strong> ${formatter.format(new Date(session.expiresAt))}</span>
+          `;
+          li.appendChild(meta);
+
+          activeSessionsEl.appendChild(li);
+        });
+      } catch (error) {
+        activeSessionsEl.innerHTML = '';
+        noSessionsEl.hidden = false;
+        noSessionsEl.textContent = error.message || 'Unable to load sessions';
+      }
+    }
+
+    refreshButton.addEventListener('click', () => {
+      loadActiveSessions();
+    });
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      resultCard.hidden = true;
+      errorCard.hidden = true;
+
+      const formData = new FormData(form);
+      const expiresInMinutes = Number.parseInt(formData.get('expiresInMinutes'), 10);
+      const name = (formData.get('name') || '').toString().trim();
+
+      try {
+        const response = await fetch('/api/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expiresInMinutes, name })
+        });
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ message: 'Unknown error' }));
+          throw new Error(error.message || 'Failed to create session');
+        }
+
+        const data = await response.json();
+        const origin = window.location.origin;
+        const attendeeUrl = new URL(data.attendeePath, origin);
+        const adminUrl = new URL(data.adminPath, origin);
+
+        attendeeLinkEl.textContent = attendeeUrl.href;
+        attendeeLinkEl.href = attendeeUrl.href;
+        adminLinkEl.textContent = adminUrl.href;
+        adminLinkEl.href = adminUrl.href;
+        resultNameEl.textContent = data.name;
+        resultPasswordEl.textContent = data.joinPassword;
+        resultExpiryEl.textContent = new Date(data.expiresAt).toLocaleString();
+
+        resultCard.hidden = false;
+        loadActiveSessions();
+      } catch (error) {
+        errorMessage.textContent = error.message || 'Unexpected error';
+        errorCard.hidden = false;
+      }
+    });
+
+    loadActiveSessions();
+  </script>
+</body>
+</html>

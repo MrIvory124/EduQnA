@@ -1,0 +1,258 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lecture Q&A - Admin Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>Session Dashboard</h1>
+    <section class="card" id="session-meta">
+      <p><strong>Name:</strong> <span id="session-name"></span></p>
+      <p><strong>Session ID:</strong> <span id="session-id"></span></p>
+      <p><strong>Expires at:</strong> <span id="session-expiry"></span></p>
+      <p id="session-status"></p>
+      <div class="link-block">
+        <span class="label">Attendee link</span>
+        <a id="share-link" href="#" target="_blank" rel="noreferrer noopener"></a>
+        <span class="label">Session password</span>
+        <code id="share-password"></code>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Live Questions</h2>
+      <div id="moderation-banner" class="notice" hidden></div>
+      <ul id="question-list" class="question-list"></ul>
+      <p id="empty-state" class="empty-state" hidden>No questions yet. Share the attendee link to get started.</p>
+      <p class="notice">Flagged submissions stay hidden from attendees until you allow them.</p>
+    </section>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get('sessionId');
+    const adminKey = params.get('key');
+
+    const sessionNameEl = document.getElementById('session-name');
+    const sessionIdEl = document.getElementById('session-id');
+    const sessionExpiryEl = document.getElementById('session-expiry');
+    const sessionStatusEl = document.getElementById('session-status');
+    const questionListEl = document.getElementById('question-list');
+    const moderationBannerEl = document.getElementById('moderation-banner');
+    const emptyStateEl = document.getElementById('empty-state');
+    const shareLinkEl = document.getElementById('share-link');
+    const sharePasswordEl = document.getElementById('share-password');
+
+    if (!sessionId || !adminKey) {
+      document.body.innerHTML = '<main class="container"><section class="card"><h2>Missing session details</h2><p>Expected sessionId and key query parameters.</p></section></main>';
+      throw new Error('Missing required query params');
+    }
+
+    sessionIdEl.textContent = sessionId;
+
+    function formatTimestamp(timestamp) {
+      const date = new Date(timestamp);
+      return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+    }
+
+    function setModerationBanner(pendingCount) {
+      if (!moderationBannerEl) {
+        return;
+      }
+      moderationBannerEl.dataset.pending = String(pendingCount);
+      if (pendingCount > 0) {
+        moderationBannerEl.hidden = false;
+        moderationBannerEl.textContent = pendingCount === 1
+          ? '1 question needs approval before attendees can see it.'
+          : `${pendingCount} questions need approval before attendees can see them.`;
+      } else if (!moderationBannerEl.classList.contains('attention')) {
+        moderationBannerEl.hidden = true;
+        moderationBannerEl.textContent = '';
+      }
+    }
+
+    function flashModerationBanner(message) {
+      if (!moderationBannerEl) {
+        return;
+      }
+      moderationBannerEl.hidden = false;
+      if (typeof message === 'string' && message.length) {
+        moderationBannerEl.textContent = message;
+      }
+      moderationBannerEl.classList.add('attention');
+      if (moderationPulseTimeout) {
+        clearTimeout(moderationPulseTimeout);
+      }
+      moderationPulseTimeout = setTimeout(() => {
+        moderationBannerEl.classList.remove('attention');
+        const pending = Number(moderationBannerEl.dataset.pending || 0);
+        if (pending > 0) {
+          setModerationBanner(pending);
+        } else {
+          moderationBannerEl.hidden = true;
+          moderationBannerEl.textContent = '';
+        }
+      }, 2000);
+    }
+
+    function renderSession(session) {
+      sessionNameEl.textContent = session.name;
+      sessionExpiryEl.textContent = formatTimestamp(session.expiresAt);
+      sessionStatusEl.textContent = `Status: ${session.status}`;
+
+      questionListEl.innerHTML = '';
+      const pendingModeration = session.questions.filter((question) => question.moderation !== 'approved').length;
+      setModerationBanner(pendingModeration);
+
+      if (!session.questions.length) {
+        emptyStateEl.hidden = false;
+        return;
+      }
+
+      emptyStateEl.hidden = true;
+
+      session.questions.forEach((question) => {
+        const item = document.createElement('li');
+        item.className = 'question-item';
+        const moderationPending = question.moderation !== 'approved';
+        if (moderationPending) {
+          item.classList.add('requires-review');
+        }
+
+        const content = document.createElement('div');
+        const textEl = document.createElement('p');
+        textEl.textContent = question.text;
+
+        const alias = document.createElement('div');
+        alias.className = 'question-meta';
+        alias.textContent = question.authorAlias ? `Submitted by ${question.authorAlias}` : 'Submitted anonymously';
+
+        const meta = document.createElement('div');
+        meta.className = 'question-meta';
+        meta.textContent = `${question.upvotes} votes ? ${new Date(question.createdAt).toLocaleTimeString()}`;
+
+        content.appendChild(textEl);
+        content.appendChild(alias);
+        content.appendChild(meta);
+
+        if (moderationPending) {
+          const alert = document.createElement('div');
+          alert.className = 'question-alert';
+
+          const message = document.createElement('p');
+          message.textContent = 'Hidden from attendees until you allow it.';
+          alert.appendChild(message);
+
+          if (Array.isArray(question.flaggedReasons) && question.flaggedReasons.length) {
+            const reasonList = document.createElement('ul');
+            question.flaggedReasons.forEach((reason) => {
+              const reasonItem = document.createElement('li');
+              reasonItem.textContent = reason;
+              reasonList.appendChild(reasonItem);
+            });
+            alert.appendChild(reasonList);
+          }
+
+          content.appendChild(alert);
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+
+        const statusPill = document.createElement('span');
+        statusPill.className = 'status-pill';
+        statusPill.textContent = question.status;
+        if (question.status === 'answered') {
+          statusPill.classList.add('answered');
+        }
+        actions.appendChild(statusPill);
+
+        if (moderationPending) {
+          const moderationPill = document.createElement('span');
+          moderationPill.className = 'status-pill pending';
+          moderationPill.textContent = 'needs review';
+          actions.appendChild(moderationPill);
+        }
+
+        if (!moderationPending && question.status === 'open') {
+          const answerButton = document.createElement('button');
+          answerButton.textContent = 'Mark answered';
+          answerButton.addEventListener('click', () => {
+            socket.emit('question:answered', { questionId: question.id });
+          });
+          actions.appendChild(answerButton);
+        }
+
+        if (moderationPending) {
+          const allowButton = document.createElement('button');
+          allowButton.textContent = 'Allow question';
+          allowButton.addEventListener('click', () => {
+            socket.emit('question:approve', { questionId: question.id });
+          });
+          actions.appendChild(allowButton);
+        }
+
+        const removeButton = document.createElement('button');
+        removeButton.textContent = 'Remove';
+        removeButton.addEventListener('click', () => {
+          socket.emit('question:remove', { questionId: question.id });
+        });
+        actions.appendChild(removeButton);
+
+        item.appendChild(content);
+        item.appendChild(actions);
+        questionListEl.appendChild(item);
+      });
+    }
+
+    function handleInactiveSession(message) {
+      sessionStatusEl.textContent = message || 'Session inactive';
+      questionListEl.innerHTML = '';
+      emptyStateEl.hidden = true;
+      setModerationBanner(0);
+    }
+
+    let socket;
+    let attendeeHref = '';
+    let moderationPulseTimeout;
+
+    async function bootstrap() {
+      try {
+        const response = await fetch(`/api/sessions/${sessionId}/admin?key=${encodeURIComponent(adminKey)}`);
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ message: 'Failed to load session' }));
+          handleInactiveSession(error.message);
+          return;
+        }
+        const session = await response.json();
+        renderSession(session);
+
+        attendeeHref = new URL(session.attendeePath, window.location.origin).href;
+        shareLinkEl.textContent = attendeeHref;
+        shareLinkEl.href = attendeeHref;
+        sharePasswordEl.textContent = session.joinPassword;
+
+        socket = io({
+          query: { sessionId, adminKey }
+        });
+
+        socket.on('session:update', renderSession);
+        socket.on('moderation:flagged', () => {
+          flashModerationBanner('New question flagged for review.');
+        });
+        socket.on('session:inactive', () => {
+          handleInactiveSession('Session is closed or expired.');
+        });
+      } catch (error) {
+        handleInactiveSession(error.message || 'Unable to load session');
+      }
+    }
+
+    bootstrap();
+  </script>
+</body>
+</html>
