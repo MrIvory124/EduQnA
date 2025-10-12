@@ -5,13 +5,16 @@
 - In-memory data store holds active sessions, questions, and votes for prototype simplicity.
 - Static frontend pages (lecturer + attendee) served from /public and communicating via WebSocket.
 
+## How to install
+To install and use this with NPM, see [usage.md](https://github.com/MrIvory124/anonymous-questions/blob/main/docs/usage.md)
+
 ## Session Lifecycle
 1. Lecturer generates a session link with an expiry timestamp, optional custom name, and auto-generated join password.
 2. Attendees join via the link, provide the session password and a display name, then post/upvote questions in real time.
 3. Lecturer dashboard receives live updates, can mark questions answered, remove questions, and (future work) deactivate sessions.
 
 ## Data Model (In-Memory)
-`	s
+```	js
 interface Session {
   id: string;             // public session id embedded in attendee link
   name: string;           // friendly session name (custom or generated)
@@ -31,7 +34,7 @@ interface Question {
   upvotes: Set<string>;   // socket client ids to avoid duplicate votes
   status: 'open' | 'answered';
 }
-`
+```
 
 ## API Surface
 - GET /api/sessions → list active sessions (name, id, expiry) for homepage display.
