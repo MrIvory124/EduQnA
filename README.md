@@ -4,6 +4,11 @@
 - Single Node.js backend (Express) serving REST endpoints and Socket.IO for real-time updates.
 - In-memory data store holds active sessions, questions, and votes for prototype simplicity.
 - Static frontend pages (lecturer + attendee) served from /public and communicating via WebSocket.
+  
+## Profanity & Moderation Hooks
+- Using Obscenity to filter out bad words
+- Filter can be customised to add words
+- Admin of a room can remove a message with a bad word
 
 ## How to install
 To install and use this with NPM, see [usage.md](https://github.com/MrIvory124/anonymous-questions/blob/main/docs/usage.md)
@@ -48,11 +53,10 @@ interface Question {
   - question:remove
   - Server broadcasts session:update with ranked questions (no secrets in payload).
 
-## Profanity & Moderation Hooks
-- Placeholder utility sanitizeQuestion(text) to integrate third-party or custom filters later.
-- Currently no-op but ensures single insertion point; moderation actions can extend the admin endpoint/socket events.
 
 ## Constraints & Future Work
 - Data resets when server restarts; replace with persistent store later.
 - Token + password validation should move to signed tokens and hash storage for production hardening.
 - Add lecturer controls for closing sessions and bulk moderation actions, plus rate limiting / CAPTCHA.
+- Do sanitization on the names of both users and rooms
+- Improve the css of the whole prototype

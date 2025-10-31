@@ -3,7 +3,7 @@
 const { ADMIN_ROOM_SUFFIX, QUESTION_RATE_WINDOW_MS, QUESTION_RATE_MAX } = require("./config");
 const { getSession, formatSession, ensureSessionStatus } = require("./store/sessions");
 const { now, normalizeParticipantId } = require("./utils");
-const { sanitizeQuestion } = require("./profanity");
+const { sanitizeText } = require("./profanity");
 const { generateId } = require("./utils");
 
 /**
@@ -151,7 +151,7 @@ function attachSocketHandlers(io) {
       if (data.text !== undefined) {
         inputText = data.text;
       }
-      var sanitized = sanitizeQuestion(String(inputText));
+      var sanitized = sanitizeText(String(inputText));
       var text = sanitized.text;
       var aliasRaw = data.authorAlias || "";
       var authorAlias = aliasRaw.toString().replace(/[<>]/g, "").trim().slice(0, 50);
