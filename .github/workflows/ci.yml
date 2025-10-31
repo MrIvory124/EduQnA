@@ -3,8 +3,11 @@ name: CI
 on:
   push:
     branches: ["**"]
+    tags:
+      - 'v*'
   pull_request:
     branches: ["**"]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -33,11 +36,28 @@ jobs:
       - name: Run tests
         run: npm test
 
-  docker-build:
+  release:
+    name: Build and Release (tagged)
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - uses: actions/checkout@v4
-      - name: Build image
-        run: docker build -t lecture-qa:ci .
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          IMAGE_TAG=${{ github.ref_name }}
+          docker build -t lecture-qa:${IMAGE_TAG} .
+          docker image save -o lecture-qa-${IMAGE_TAG}.tar lecture-qa:${IMAGE_TAG}
+          sha256sum lecture-qa-${IMAGE_TAG}.tar > lecture-qa-${IMAGE_TAG}.sha256
+
+      - name: Create GitHub Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            lecture-qa-${{ github.ref_name }}.tar
+            lecture-qa-${{ github.ref_name }}.sha256
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
