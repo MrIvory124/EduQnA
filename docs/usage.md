@@ -37,7 +37,7 @@ By default the server listens on port 3000. Override it with the PORT environmen
 Each link opens static pages served from public/:
 - index.html - create sessions and view the active list
 - session.html - attendee view that requires the session password/display name and stays in sync through WebSockets
-- dmin.html - moderator controls with quick links, mark-as-answered, and remove-question actions
+- admin.html - moderator controls with quick links, mark-as-answered, and remove-question actions
 
 ## Optional: API Usage
 You can also call the backend directly with HTTP requests. Example session creation with curl:
@@ -46,7 +46,7 @@ curl -X POST http://localhost:3000/api/sessions \
   -H "Content-Type: application/json" \
   -d '{"expiresInMinutes":60,"name":"Guest Lecture"}'
 ~~~
-The response includes ttendeePath, dminPath, joinPassword, and the resolved session name.
+The response includes attendeePath, adminPath, joinPassword, and the resolved session name.
 
 Active sessions can be retrieved with:
 ~~~bash

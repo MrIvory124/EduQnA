@@ -1,4 +1,9 @@
-// TODO: replace this with a library that handles banned terms
+"use strict";
+
+/**
+ * List of flagged terms for basic profanity detection.
+ * TODO: Replace with a maintained library and locale-aware matching.
+ */
 const FLAGGED_TERMS = [
   'fuck', 'fucked', 'fucker', 'fucking', 'fuk', 'fuking', 'fukker', 'fuked',
   'shit', 'shitty', 'shite', 'shitter', 'shithead', 'shitface', 'shitting',
@@ -94,55 +99,65 @@ const FLAGGED_TERMS = [
   'master', 'masters'
 ];
 
+/**
+ * Pattern rules for minimal XSS-like content detection.
+ */
 const FLAGGED_PATTERNS = [
   {
-    test: (text) => /<script\b/i.test(text),
+    test: function patternScript(text) { return /<script\b/i.test(text); },
     reason: 'contains script tag markup'
   },
   {
-    test: (text) => /on\w+\s*=\s*("|')[^"']*("|')/i.test(text),
+    test: function patternInlineHandler(text) { return /on\w+\s*=\s*("|')[^"']*("|')/i.test(text); },
     reason: 'contains inline event handler attributes'
   },
   {
-    test: (text) => /href\s*=\s*("|')javascript:/i.test(text),
+    test: function patternJsHref(text) { return /href\s*=\s*("|')javascript:/i.test(text); },
     reason: 'contains javascript URL scheme'
   }
 ];
 
+/**
+ * Sanitizes a question string and flags potential issues.
+ * - Normalizes whitespace and line endings
+ * - Checks for flagged terms and simple dangerous patterns
+ * @param {unknown} rawText
+ * @returns {{ text: string, flagged: boolean, reasons: string[] }}
+ */
 function sanitizeQuestion(rawText) {
   if (!rawText) {
     return { text: '', flagged: false, reasons: [] };
   }
 
-  const normalized = rawText
+  var normalized = String(rawText)
     .replace(/\u0000/g, '')
     .replace(/\r\n?/g, '\n');
-  const trimmed = normalized.trim();
+  var trimmed = normalized.trim();
   if (!trimmed) {
     return { text: '', flagged: false, reasons: [] };
   }
 
-  const lower = trimmed.toLowerCase();
-  const reasons = [];
+  var lower = trimmed.toLowerCase();
+  var reasons = [];
 
-  FLAGGED_TERMS.forEach((term) => {
-    if (lower.includes(term)) {
-      reasons.push(`contains flagged term "${term}"`);
+  FLAGGED_TERMS.forEach(function eachTerm(term) {
+    if (lower.indexOf(term) !== -1) {
+      reasons.push('contains flagged term "' + term + '"');
     }
   });
 
-  FLAGGED_PATTERNS.forEach(({ test, reason }) => {
-    if (test(trimmed)) {
-      reasons.push(reason);
+  FLAGGED_PATTERNS.forEach(function eachPattern(rule) {
+    if (rule.test(trimmed)) {
+      reasons.push(rule.reason);
     }
   });
 
-  const safeText = trimmed.replace(/\s{3,}/g, '  ');
+  var safeText = trimmed.replace(/\s{3,}/g, '  ');
 
   return {
     text: safeText,
     flagged: reasons.length > 0,
-    reasons
+    reasons: reasons
   };
 }
 
