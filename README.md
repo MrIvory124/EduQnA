@@ -1,4 +1,6 @@
 ﻿# Lecture Q&A Prototype Architecture
+[![CI](https://github.com/MrIvory124/EduQnA/actions/workflows/ci.yml/badge.svg)](https://github.com/MrIvory124/EduQnA/actions/workflows/ci.yml)
+
 
 ## Overview
 - Single Node.js backend (Express) serving REST endpoints and Socket.IO for real-time updates.
