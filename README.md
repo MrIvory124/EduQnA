@@ -5,6 +5,7 @@
 - Single Node.js backend (Express) serving REST endpoints and Socket.IO for real-time updates.
 - In-memory data store holds active sessions, questions, and votes for prototype simplicity.
 - Static frontend pages (lecturer + attendee) served from /public and communicating via WebSocket.
+- My first attempt to get Codex to one-shot a programming challenge.
   
 ## Profanity & Moderation Hooks
 - Using Obscenity to filter out bad words
